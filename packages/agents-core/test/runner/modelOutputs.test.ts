@@ -510,97 +510,72 @@ describe('processModelResponse', () => {
     },
   );
 
-  it.each(['mcp_call', 'mcp_list_tools', 'mcp_approval_request'] as const)(
-    'rejects programmatic %s items before a deferred MCP server is loaded',
-    async (mcpCallType) => {
-      const mcpTool = hostedMcpTool({
-        serverLabel: 'server',
-        serverUrl: 'https://mcp.example.com/server',
-        requireApproval: 'always',
-        deferLoading: true,
-        allowedCallers: ['programmatic'],
-      });
-      const programmaticMcpCall: protocol.HostedToolCallItem = {
-        type: 'hosted_tool_call',
-        id: `${mcpCallType}_programmatic`,
-        name: mcpCallType,
-        status: 'completed',
-        caller: { type: 'program', callerId: 'call_program' },
-        providerData:
-          mcpCallType === 'mcp_call'
-            ? {
-                type: mcpCallType,
-                id: 'mcp_call_programmatic',
-                server_label: 'server',
-                name: 'lookup',
-                arguments: '{}',
-              }
-            : mcpCallType === 'mcp_list_tools'
-              ? {
-                  type: mcpCallType,
-                  id: 'mcp_list_tools_programmatic',
-                  server_label: 'server',
-                  tools: [],
-                }
-              : {
-                  type: mcpCallType,
-                  id: 'mcp_approval_programmatic',
-                  server_label: 'server',
-                  name: 'lookup',
-                  arguments: '{}',
-                },
-      };
-
-      expect(() =>
-        processModelResponse(
-          { output: [programmaticMcpCall], usage: new Usage() },
-          TEST_AGENT,
-          [mcpTool],
-          [],
-        ),
-      ).toThrow(
-        /deferred MCP call server before it was loaded via tool_search/,
-      );
-
-      const clientToolSearch = attachClientToolSearchExecutor(
-        {
-          type: 'hosted_tool',
-          name: 'tool_search',
-          providerData: {
-            type: 'tool_search',
-            execution: 'client',
-          },
-        },
-        async () => [],
-      );
-      const toolSearchCall: protocol.ToolSearchCallItem = {
-        type: 'tool_search_call',
-        id: `ts_before_unloaded_${mcpCallType}`,
-        status: 'completed',
-        arguments: { paths: [] },
-        providerData: {
-          call_id: `call_ts_before_unloaded_${mcpCallType}`,
-          execution: 'client',
-        },
-      };
-
-      await expect(
-        processModelResponseAsync(
+  it('accepts deferred hosted MCP calls without local tool_search bookkeeping', async () => {
+    const mcpTool = hostedMcpTool({
+      serverLabel: 'server',
+      serverUrl: 'https://mcp.example.com/server',
+      requireApproval: 'never',
+      deferLoading: true,
+    });
+    const mcpListTools: protocol.HostedToolCallItem = {
+      type: 'hosted_tool_call',
+      id: 'mcp_list_tools_provider',
+      name: 'mcp_list_tools',
+      status: 'completed',
+      providerData: {
+        type: 'mcp_list_tools',
+        id: 'mcp_list_tools_provider',
+        server_label: 'server',
+        tools: [
           {
-            output: [toolSearchCall, programmaticMcpCall],
-            usage: new Usage(),
+            name: 'lookup',
+            description: 'Look up a record.',
+            input_schema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false,
+            },
           },
-          TEST_AGENT,
-          [clientToolSearch, mcpTool],
-          [],
-          new RunState(new RunContext(), 'hello', TEST_AGENT, 1),
-          [],
-        ),
-      ).rejects.toThrow(
-        /deferred MCP call server before it was loaded via tool_search/,
-      );
-    },
-  );
+        ],
+      },
+    };
+    const mcpCall: protocol.HostedToolCallItem = {
+      type: 'hosted_tool_call',
+      id: 'mcp_call_provider',
+      name: 'mcp_call',
+      status: 'completed',
+      output: 'found',
+      providerData: {
+        type: 'mcp_call',
+        id: 'mcp_call_provider',
+        server_label: 'server',
+        name: 'lookup',
+        arguments: '{}',
+      },
+    };
+    const response: ModelResponse = {
+      output: [mcpListTools, mcpCall],
+      usage: new Usage(),
+    };
+
+    const result = processModelResponse(response, TEST_AGENT, [mcpTool], []);
+
+    expect(result.newItems).toHaveLength(2);
+    expect(result.newItems).toEqual([
+      expect.any(ToolCallItem),
+      expect.any(ToolCallItem),
+    ]);
+    await expect(
+      processModelResponseAsync(
+        response,
+        TEST_AGENT,
+        [mcpTool],
+        [],
+        new RunState(new RunContext(), 'hello', TEST_AGENT, 1),
+        [],
+      ),
+    ).resolves.toBeDefined();
+  });
 
   it('accepts programmatic calls after a deferred MCP server is loaded', () => {
     const mcpTool = hostedMcpTool({

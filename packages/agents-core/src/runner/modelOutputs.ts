@@ -128,7 +128,6 @@ function ensureHostedToolCallAllowed<TContext>(
   output: protocol.HostedToolCallItem,
   tools: Tool<TContext>[],
   mcpToolMap: Map<string, HostedMCPTool>,
-  loadedToolNames: Set<string>,
   agent: Agent<any, any>,
 ): void {
   const providerType = output.providerData?.type;
@@ -177,23 +176,6 @@ function ensureHostedToolCallAllowed<TContext>(
     serverLabel,
     agent,
   );
-  if (
-    mcpTool.providerData.defer_loading !== true ||
-    loadedToolNames.has(serverLabel)
-  ) {
-    return;
-  }
-
-  const message = `Model produced deferred MCP call ${serverLabel} before it was loaded via tool_search.`;
-  addErrorToCurrentSpan({
-    message,
-    data: {
-      agent_name: agent.name,
-      mcp_server_label: serverLabel,
-      tool_call_id: output.id,
-    },
-  });
-  throw new ModelBehaviorError(message);
 }
 
 function handleToolCallAction<
@@ -822,13 +804,7 @@ export function processModelResponse<TContext>(
     } else if (output.type === 'program_output') {
       items.push(new RunToolCallOutputItem(output, agent, output.output));
     } else if (output.type === 'hosted_tool_call') {
-      ensureHostedToolCallAllowed(
-        output,
-        tools,
-        mcpToolMap,
-        loadedDeferredToolState.loadedToolNames,
-        agent,
-      );
+      ensureHostedToolCallAllowed(output, tools, mcpToolMap, agent);
       items.push(new RunToolCallItem(output, agent));
       const toolName = output.name;
       toolsUsed.push(toolName);
@@ -1242,13 +1218,7 @@ export async function processModelResponseAsync<TContext>(
     } else if (output.type === 'program_output') {
       items.push(new RunToolCallOutputItem(output, agent, output.output));
     } else if (output.type === 'hosted_tool_call') {
-      ensureHostedToolCallAllowed(
-        output,
-        availableTools,
-        mcpToolMap,
-        loadedDeferredToolState.loadedToolNames,
-        agent,
-      );
+      ensureHostedToolCallAllowed(output, availableTools, mcpToolMap, agent);
       items.push(new RunToolCallItem(output, agent));
       const toolName = output.name;
       toolsUsed.push(toolName);
